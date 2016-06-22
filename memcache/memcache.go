@@ -2,17 +2,16 @@ package memcache
 
 import (
 	"fmt"
-	"os"
+	"log"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/dustin/gomemcached/client"
+	"github.com/intelsdi-x/snap-plugin-utilities/config"
 	"github.com/intelsdi-x/snap/control/plugin"
 	"github.com/intelsdi-x/snap/control/plugin/cpolicy"
 	"github.com/intelsdi-x/snap/core"
-	"github.com/intelsdi-x/snap/core/cdata"
-	"github.com/intelsdi-x/snap/core/ctypes"
 )
 
 const (
@@ -35,44 +34,84 @@ func NewMemcacheCollector() *Memcache {
 type Memcache struct {
 }
 
-func (m *Memcache) CollectMetrics(mts []plugin.PluginMetricType) ([]plugin.PluginMetricType, error) {
-	metrics := make([]plugin.PluginMetricType, 0)
-	cfg, err := getConfig(mts[0].Config())
-	if err != nil {
-		return nil, err
-	}
+func (m *Memcache) CollectMetrics(mts []plugin.MetricType) ([]plugin.MetricType, error) {
+	metrics := make([]plugin.MetricType, 0)
+	cfg := getConfig(mts[0])
 
 	conn, err := connect(cfg["proto"], cfg["server"])
 	if err != nil {
 		return nil, err
 	}
+	var gMetrics map[string]float64
+	var sMetrics map[string]float64
+	var iMetrics map[string]map[string]float64
+	var slMetrics map[string]map[string]float64
+	runTime := time.Now()
 	for _, m := range mts {
-		ns := joinNamespace(m.Namespace())
-		switch ns {
-		case "raintank.memcache.general.*":
-			gm, err := generalMetrics(conn)
-			if err != nil {
-				return metrics, err
+		ns := m.Namespace()
+		section := ns[2].Value
+		switch section {
+		case "general":
+			stat := ns[3].Value
+			if len(gMetrics) == 0 {
+				gMetrics, err = generalMetrics(conn)
+				if err != nil {
+					return metrics, err
+				}
 			}
-			metrics = append(metrics, gm...)
-		case "raintank.memcache.settings.*":
-			sm, err := settingsMetrics(conn)
-			if err != nil {
-				return metrics, err
+
+			metrics = append(metrics, plugin.MetricType{
+				Data_:      gMetrics[stat],
+				Namespace_: core.NewNamespace("raintank", "memcache", "general", stat),
+				Timestamp_: runTime,
+				Version_:   m.Version(),
+			})
+		case "settings":
+			stat := ns[3].Value
+			if len(sMetrics) == 0 {
+				sMetrics, err = settingsMetrics(conn)
+				if err != nil {
+					return metrics, err
+				}
 			}
-			metrics = append(metrics, sm...)
-		case "raintank.memcache.items.*.*":
-			im, err := itemsMetrics(conn)
-			if err != nil {
-				return metrics, err
+			metrics = append(metrics, plugin.MetricType{
+				Data_:      sMetrics[stat],
+				Namespace_: core.NewNamespace("raintank", "memcache", "settings", stat),
+				Timestamp_: runTime,
+				Version_:   m.Version(),
+			})
+		case "items":
+			stat := ns[4].Value
+			if len(iMetrics) == 0 {
+				iMetrics, err = itemsMetrics(conn)
+				if err != nil {
+					return metrics, err
+				}
 			}
-			metrics = append(metrics, im...)
-		case "raintank.memcache.slabs.*.*":
-			sm, err := slabsMetrics(conn)
-			if err != nil {
-				return metrics, err
+			for slab, met := range iMetrics {
+				metrics = append(metrics, plugin.MetricType{
+					Data_:      met[stat],
+					Namespace_: core.NewNamespace("raintank", "memcache", "items", slab, stat),
+					Timestamp_: runTime,
+					Version_:   m.Version(),
+				})
 			}
-			metrics = append(metrics, sm...)
+		case "slabs":
+			stat := ns[4].Value
+			if len(slMetrics) == 0 {
+				slMetrics, err = slabsMetrics(conn)
+				if err != nil {
+					return metrics, err
+				}
+			}
+			for slab, met := range slMetrics {
+				metrics = append(metrics, plugin.MetricType{
+					Data_:      met[stat],
+					Namespace_: core.NewNamespace("raintank", "memcache", "slabs", slab, stat),
+					Timestamp_: runTime,
+					Version_:   m.Version(),
+				})
+			}
 		default:
 			return nil, fmt.Errorf("invalid metric requested. %s", ns)
 		}
@@ -81,21 +120,61 @@ func (m *Memcache) CollectMetrics(mts []plugin.PluginMetricType) ([]plugin.Plugi
 	return metrics, nil
 }
 
-func (m *Memcache) GetMetricTypes(cfg plugin.PluginConfigType) ([]plugin.PluginMetricType, error) {
-	mts := []plugin.PluginMetricType{}
-	mts = append(mts, plugin.PluginMetricType{
-		Namespace_: []string{"raintank", "memcache", "general", "*"},
-		Labels_:    []core.Label{{Index: 3, Name: "stat"}},
-	}, plugin.PluginMetricType{
-		Namespace_: []string{"raintank", "memcache", "settings", "*"},
-		Labels_:    []core.Label{{Index: 3, Name: "stat"}},
-	}, plugin.PluginMetricType{
-		Namespace_: []string{"raintank", "memcache", "items", "*", "*"},
-		Labels_:    []core.Label{{Index: 3, Name: "slabclass"}, {Index: 4, Name: "stat"}},
-	}, plugin.PluginMetricType{
-		Namespace_: []string{"raintank", "memcache", "slabs", "*", "*"},
-		Labels_:    []core.Label{{Index: 3, Name: "slabclass"}, {Index: 4, Name: "stat"}},
-	})
+func (m *Memcache) GetMetricTypes(pct plugin.ConfigType) ([]plugin.MetricType, error) {
+	cfg := getConfig(pct)
+	fmt.Printf("connecting to %s\n", cfg["server"])
+	conn, err := connect(cfg["proto"], cfg["server"])
+	mts := []plugin.MetricType{}
+	generalm, err := generalMetrics(conn)
+	if err != nil {
+		return nil, err
+	}
+	for metricName := range generalm {
+		mts = append(mts, plugin.MetricType{
+			Namespace_: core.NewNamespace("raintank", "memcache", "general", metricName),
+		})
+	}
+
+	settingm, err := settingsMetrics(conn)
+	if err != nil {
+		return nil, err
+	}
+	for metricName := range settingm {
+		mts = append(mts, plugin.MetricType{
+			Namespace_: core.NewNamespace("raintank", "memcache", "settings", metricName),
+		})
+	}
+	itemm, err := itemsMetrics(conn)
+	if err != nil {
+		return nil, err
+	}
+	if len(itemm) > 0 {
+		for _, m := range itemm {
+			for metricName := range m {
+				mts = append(mts, plugin.MetricType{
+					Namespace_: core.NewNamespace("raintank", "memcache", "items").AddDynamicElement("slabclass", "slabclass").AddStaticElement(metricName),
+				})
+			}
+			break
+		}
+
+	}
+
+	slabm, err := slabsMetrics(conn)
+	if err != nil {
+		return nil, err
+	}
+	if len(slabm) > 0 {
+		for _, m := range slabm {
+			for metricName := range m {
+				mts = append(mts, plugin.MetricType{
+					Namespace_: core.NewNamespace("raintank", "memcache", "slabs").AddDynamicElement("slabclass", "slabclass").AddStaticElement(metricName),
+				})
+			}
+			break
+		}
+	}
+
 	return mts, nil
 }
 
@@ -110,72 +189,63 @@ func (m *Memcache) GetConfigPolicy() (*cpolicy.ConfigPolicy, error) {
 	return c, nil
 }
 
-func getConfig(cfg *cdata.ConfigDataNode) (map[string]string, error) {
-	config := make(map[string]string)
-	conf := cfg.Table()
-	srv, ok := conf["server"]
-	if !ok || srv.(ctypes.ConfigValueStr).Value == "" {
-		return config, fmt.Errorf("server not defined in config.")
+func getConfig(cfg interface{}) map[string]string {
+	conf := make(map[string]string)
+	items, err := config.GetConfigItems(cfg, "server", "proto")
+	if err != nil {
+		log.Fatal(err.Error())
 	}
-	config["server"] = srv.(ctypes.ConfigValueStr).Value
-	proto, ok := conf["proto"]
-	if !ok || proto.(ctypes.ConfigValueStr).Value == "" {
-		return config, fmt.Errorf("proto not defined in config.")
-	}
-	config["proto"] = proto.(ctypes.ConfigValueStr).Value
-	return config, nil
+	conf["server"] = items["server"].(string)
+	conf["proto"] = items["proto"].(string)
+	return conf
 }
 
 func connect(proto, dest string) (*memcached.Client, error) {
-	fmt.Printf("connecting to %s/%s", proto, dest)
 	return memcached.Connect(proto, dest)
 }
 
-func generalMetrics(conn *memcached.Client) ([]plugin.PluginMetricType, error) {
+func generalMetrics(conn *memcached.Client) (map[string]float64, error) {
 	stats, err := conn.StatsMap("")
-	metrics := make([]plugin.PluginMetricType, 0)
+	metrics := make(map[string]float64)
 	if err != nil {
 		return nil, err
 	}
-	hostname, _ := os.Hostname()
 	for stat, value := range stats {
 		//only include the stat if we can parse it as float64
 		v, err := strconv.ParseFloat(value, 64)
 		if err != nil {
 			continue
 		}
-		mt := plugin.NewPluginMetricType([]string{"raintank", "memcache", "general", stat}, time.Now(), hostname, nil, []core.Label{{Index: 3, Name: "stat"}}, v)
-		metrics = append(metrics, *mt)
+		metrics[stat] = v
 	}
 	return metrics, nil
 }
 
-func settingsMetrics(conn *memcached.Client) ([]plugin.PluginMetricType, error) {
+func settingsMetrics(conn *memcached.Client) (map[string]float64, error) {
 	stats, err := conn.StatsMap("settings")
-	metrics := make([]plugin.PluginMetricType, 0)
+	metrics := make(map[string]float64)
 	if err != nil {
 		return nil, err
 	}
-	hostname, _ := os.Hostname()
+
 	for stat, value := range stats {
 		//only include the stat if we can parse it as float64
 		v, err := strconv.ParseFloat(value, 64)
 		if err != nil {
 			continue
 		}
-		mt := plugin.NewPluginMetricType([]string{"raintank", "memcache", "settings", stat}, time.Now(), hostname, nil, []core.Label{{Index: 3, Name: "stat"}}, v)
-		metrics = append(metrics, *mt)
+		metrics[stat] = v
 	}
 	return metrics, nil
 }
 
-func itemsMetrics(conn *memcached.Client) ([]plugin.PluginMetricType, error) {
+func itemsMetrics(conn *memcached.Client) (map[string]map[string]float64, error) {
 	stats, err := conn.StatsMap("items")
-	metrics := make([]plugin.PluginMetricType, 0)
+	metrics := make(map[string]map[string]float64)
 	if err != nil {
 		return nil, err
 	}
-	hostname, _ := os.Hostname()
+
 	for fullstat, value := range stats {
 		//only include the stat if we can parse it as float64
 		v, err := strconv.ParseFloat(value, 64)
@@ -185,19 +255,20 @@ func itemsMetrics(conn *memcached.Client) ([]plugin.PluginMetricType, error) {
 		parts := strings.Split(fullstat, ":")
 		slabclass := parts[1]
 		stat := parts[2]
-		mt := plugin.NewPluginMetricType([]string{"raintank", "memcache", "items", slabclass, stat}, time.Now(), hostname, nil, []core.Label{{Index: 3, Name: "slabclass"}, {Index: 4, Name: "stat"}}, v)
-		metrics = append(metrics, *mt)
+		if _, ok := metrics[slabclass]; !ok {
+			metrics[slabclass] = make(map[string]float64)
+		}
+		metrics[slabclass][stat] = v
 	}
 	return metrics, nil
 }
 
-func slabsMetrics(conn *memcached.Client) ([]plugin.PluginMetricType, error) {
+func slabsMetrics(conn *memcached.Client) (map[string]map[string]float64, error) {
 	stats, err := conn.StatsMap("slabs")
-	metrics := make([]plugin.PluginMetricType, 0)
+	metrics := make(map[string]map[string]float64)
 	if err != nil {
 		return nil, err
 	}
-	hostname, _ := os.Hostname()
 	for fullstat, value := range stats {
 		//only include the stat if we can parse it as float64
 		v, err := strconv.ParseFloat(value, 64)
@@ -214,12 +285,10 @@ func slabsMetrics(conn *memcached.Client) ([]plugin.PluginMetricType, error) {
 			slabclass = parts[0]
 			stat = parts[1]
 		}
-		mt := plugin.NewPluginMetricType([]string{"raintank", "memcache", "slabs", slabclass, stat}, time.Now(), hostname, nil, []core.Label{{Index: 3, Name: "slabclass"}, {Index: 4, Name: "stat"}}, v)
-		metrics = append(metrics, *mt)
+		if _, ok := metrics[slabclass]; !ok {
+			metrics[slabclass] = make(map[string]float64)
+		}
+		metrics[slabclass][stat] = v
 	}
 	return metrics, nil
-}
-
-func joinNamespace(ns []string) string {
-	return strings.Join(ns, ".")
 }
