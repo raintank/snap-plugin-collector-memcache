@@ -165,13 +165,27 @@ func (m *Memcache) GetMetricTypes(pct plugin.ConfigType) ([]plugin.MetricType, e
 		return nil, err
 	}
 	if len(slabm) > 0 {
-		for _, m := range slabm {
-			for metricName := range m {
-				mts = append(mts, plugin.MetricType{
-					Namespace_: core.NewNamespace("raintank", "memcache", "slabs").AddDynamicElement("slabclass", "slabclass").AddStaticElement(metricName),
-				})
+		perSlabSeen := false
+		totalsSeen := false
+		for slab, m := range slabm {
+			if slab == "total" {
+				totalsSeen = true
+				for metricName := range m {
+					mts = append(mts, plugin.MetricType{
+						Namespace_: core.NewNamespace("raintank", "memcache", "slabs", "total", metricName),
+					})
+				}
+			} else {
+				for metricName := range m {
+					mts = append(mts, plugin.MetricType{
+						Namespace_: core.NewNamespace("raintank", "memcache", "slabs").AddDynamicElement("slabclass", "slabclass").AddStaticElement(metricName),
+					})
+				}
+				perSlabSeen = true
 			}
-			break
+			if perSlabSeen && totalsSeen {
+				break
+			}
 		}
 	}
 
