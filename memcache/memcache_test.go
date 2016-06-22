@@ -67,9 +67,9 @@ func TestMemcacheCollectMetrics(t *testing.T) {
 			t.Fatal("failed to get metricTypes", err)
 		}
 		So(len(mt), ShouldBeGreaterThan, 0)
-		//for _, m := range mt {
-		//	t.Log(m.Namespace().String())
-		//}
+		for _, m := range mt {
+			t.Log(m.Namespace().String())
+		}
 		Convey("collect metrics", func() {
 			mts := []plugin.MetricType{
 				plugin.MetricType{
