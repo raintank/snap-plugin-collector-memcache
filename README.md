@@ -47,7 +47,7 @@ This builds the plugin in `/build/rootfs/`
 ## Documentation
 
 ###Global config
-Global configuration files are described in [snap's documentation](https://github.com/intelsdi-x/snap/blob/master/docs/SNAPD_CONFIGURATION.md). You have to add `"memcache"` section with following entries:
+Global configuration files are described in [snap's documentation](https://github.com/intelsdi-x/snap/blob/master/docs/SNAPTELD_CONFIGURATION.md). You have to add `"memcache"` section with following entries:
 
  - `"server"` -  host:port of the memcached server. eg 127.0.0.1:11211
  - `"proto"`  -  Protocol to use to connect to Memcached.  tcp, tcp4, or tcp6
@@ -63,24 +63,24 @@ Example running memcache collector and writing data to a file.
 
 Make sure that your `$SNAP_PATH` is set, if not:
 ```
-$ export SNAP_PATH=<snapDirectoryPath>/build
+$ export SNAP_PATH=<snapDirectoryPath>/build/linux/x86_64
 ```
 Other paths to files should be set according to your configuration, using a file you should indicate where it is located.
 
 
 In one terminal window, open the snap daemon (in this case with logging set to 1,  trust disabled and global configuration saved in config.json ):
 ```
-$ $SNAP_PATH/bin/snapd -l 1 -t 0 --config config.json
+$ $SNAP_PATH/snapteld -l 1 -t 0 --config config.json
 ```
 
 In another terminal window:
 Load memcache plugin
 ```
-$ $SNAP_PATH/bin/snapctl plugin load snap-plugin-collector-memcache
+$ $SNAP_PATH/snaptel plugin load snap-plugin-collector-memcache
 ```
 See available metrics for your system
 ```
-$ $SNAP_PATH/bin/snapctl metric list
+$ $SNAP_PATH/snaptel metric list
 ```
 
 Create a task manifest file  (exemplary files in [examples/tasks/] (https://github.com/raintank/snap-plugin-collector-memcache/blob/master/examples/tasks/)):
@@ -111,7 +111,7 @@ Create a task manifest file  (exemplary files in [examples/tasks/] (https://gith
 ```
 Load file plugin for publishing:
 ```
-$ $SNAP_PATH/bin/snapctl plugin load $SNAP_PATH/plugin/snap-publisher-file
+$ $SNAP_PATH/snaptel plugin load $SNAP_PATH/plugin/snap-plugin-publisher-file
 Plugin loaded
 Name: file
 Version: 3
@@ -122,7 +122,7 @@ Loaded Time: Fri, 20 Nov 2015 11:41:39 PST
 
 Create a task:
 ```
-$ $SNAP_PATH/bin/snapctl task create -t examples/tasks/memcache-file.json
+$ $SNAP_PATH/snaptel task create -t examples/tasks/memcache-file.json
 Using task manifest to create task
 Task created
 ID: 02dd7ff4-8106-47e9-8b86-70067cd0a850
@@ -132,7 +132,7 @@ State: Running
 
 Stop previously created task:
 ```
-$ $SNAP_PATH/bin/snapctl task stop 02dd7ff4-8106-47e9-8b86-70067cd0a850
+$ $SNAP_PATH/snaptel task stop 02dd7ff4-8106-47e9-8b86-70067cd0a850
 Task stopped:
 ID: 02dd7ff4-8106-47e9-8b86-70067cd0a850
 ```
